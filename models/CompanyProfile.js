@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 const compProfSchema = new mongoose.Schema({
-  employerId: String,
   cname: String,
   website: String,
   cemail: String,

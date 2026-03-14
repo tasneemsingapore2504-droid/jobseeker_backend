@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 const candidateSchema = new mongoose.Schema({
-  candidateId: String,
   fname: String,
   lname: String,
   gender: String,
