@@ -1,11 +1,17 @@
 const mongoose = require("mongoose");
 
-const userSchema = new mongoose.Schema({
-  cname: String,
-  cemail: String,
-  website: String,
-  cpassword: String,
-  repasswd: String,
-});
+const userSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    role: {
+      type: String,
+      enum: ["jobseeker", "recruiter", "admin"],
+      default: "jobseeker",
+    },
+  },
+  { timestamps: true },
+);
 
-module.exports = mongoose.model("RegComp", regCompSchema);
+module.exports = mongoose.model("RegComp", userSchema);

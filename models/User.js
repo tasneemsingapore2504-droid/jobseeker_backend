@@ -8,13 +8,13 @@
 // });
 
 // module.exports = mongoose.model("User", userSchema);
-const mongoose = require("mongoose");
+// const mongoose = require("mongoose");
 
-const userSchema = new mongoose.Schema({
-  fname: String,
-  email: String,
-  pnum: Number,
-  cname: String,
-});
+// const userSchema = new mongoose.Schema({
+//   fname: String,
+//   email: String,
+//   pnum: Number,
+//   cname: String,
+// });
 
-module.exports = mongoose.model("User", userSchema);
+// module.exports = mongoose.model("User", userSchema);

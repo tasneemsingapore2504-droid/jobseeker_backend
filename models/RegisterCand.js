@@ -1,12 +1,19 @@
-const mongoose = require("mongoose");
+// const mongoose = require("mongoose");
 
-const userSchema = new mongoose.Schema({
-  fname: String,
-  email: String,
-  phone: Number,
-  dob: Date,
-  password: String,
-  repasswd: String,
-});
+// const regCandSchema = new mongoose.Schema(
+//   {
+//     name: { type: String, required: true },
+//     email: { type: String, required: true, unique: true },
+//     phone: { type: Number, required: true, unique: true },
+//     dob: { type: Date, required: true },
+//     jpassword: { type: String, required: true },
+//     role: {
+//       type: String,
+//       enum: ["jobseeker", "recruiter", "admin"],
+//       default: "jobseeker",
+//     },
+//   },
+//   { timestamps: true },
+// );
 
-module.exports = mongoose.model("RegCand", regCandSchema);
+// module.exports = mongoose.model("RegCand", regCandSchema);
