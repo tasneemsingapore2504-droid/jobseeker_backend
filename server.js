@@ -152,6 +152,7 @@ const CandidateProfile = require("./models/CandidateProfile");
 const CompanyProfile = require("./models/CompanyProfile");
 const InterviewForm = require("./models/InterviewForm");
 const JobPost = require("./models/JobPost");
+const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
 
@@ -196,6 +197,11 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+const uploadsDir = path.join(__dirname, "uploads");
+
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 app.use(express.json());
 app.use(
@@ -616,17 +622,32 @@ app.delete("/api/candidateprofile/:userId", verifyToken, async (req, res) => {
 // });
 
 app.post("/api/companyprofile", verifyToken, async (req, res) => {
-  console.log("USER:", req.user);
-  console.log("BODY: ", req.body);
-  const companyId = new mongoose.Types.ObjectId();
-  const profile = new CompanyProfile({
-    ...req.body,
-    companyId,
-  });
+  try {
+    const existingProfile = await CompanyProfile.findOne({
+      companyId: req.user.id,
+    });
 
-  await profile.save();
+    if (existingProfile) {
+      const updatedProfile = await CompanyProfile.findOneAndUpdate(
+        { companyId: req.user.id },
+        req.body,
+        { new: true },
+      );
 
-  res.json(profile);
+      return res.json(updatedProfile);
+    }
+
+    const profile = new CompanyProfile({
+      ...req.body,
+      companyId: req.user.id,
+    });
+
+    await profile.save();
+
+    res.json(profile);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 // view own profile
@@ -690,54 +711,87 @@ app.delete("/api/companyprofile/:companyId", verifyToken, async (req, res) => {
 
 /* ================= JOB ROUTES ================= */
 
-// add job
+/* ================= JOB ROUTES ================= */
+
+const getCompanyName = async (companyId) => {
+  const companyProfile = await CompanyProfile.findOne({ companyId });
+  if (companyProfile?.cname) {
+    return companyProfile.cname;
+  }
+
+  const recruiter = await User.findById(companyId);
+  return recruiter?.name || "";
+};
+
+// company adds job -> always pending first
 app.post("/api/jobs", verifyToken, async (req, res) => {
   try {
-    const job = new jobPost({
+    const companyName = await getCompanyName(req.user.id);
+
+    const job = new JobPost({
       ...req.body,
       companyId: req.user.id,
+      company: req.body.company || companyName,
       status: "pending",
     });
-    const savedJobs = await job.save();
-    res.status(201).json(savedJobs);
+
+    const savedJob = await job.save();
+    res.status(201).json(savedJob);
   } catch (error) {
     console.log("CREATE JOB ERROR:", error);
-    res.status(500).json(error);
+    res.status(500).json({ message: error.message });
   }
 });
 
+// company sees its own jobs with their current status
 app.get("/api/jobs/company", verifyToken, async (req, res) => {
   try {
-    const companyJobs = await JobPost.find({ companyId: req.user.id }).sort({
-      createdAt: -1,
-    });
-    res.json(companyJobs);
+    const companyJobs = await JobPost.find({ companyId: req.user.id })
+      .sort({
+        createdAt: -1,
+      })
+      .lean();
+
+    const companyName = await getCompanyName(req.user.id);
+    const hydratedJobs = companyJobs.map((job) => ({
+      ...job,
+      company: job.company || companyName,
+    }));
+
+    res.json(hydratedJobs);
   } catch (error) {
     console.log("FETCH COMPANY JOBS ERROR:", error);
-    res.status(500).json({message: error.message});
+    res.status(500).json({ message: error.message });
   }
 });
 
+// company updates its own job -> goes back to pending
 app.put("/api/jobs/:jid", verifyToken, async (req, res) => {
   try {
+    const companyName = await getCompanyName(req.user.id);
+
     const updatedJob = await JobPost.findOneAndUpdate(
       { _jid: req.params.jid, companyId: req.user.id },
-      { ...req.body, status: "pending" },
+      {
+        ...req.body,
+        company: req.body.company || companyName,
+        status: "pending",
+      },
       { new: true },
     );
 
     if (!updatedJob) {
-      return res.status(404).json({ message: "Job not found or unauthorized" });
+      return res.status(404).json({ message: "Job not found" });
     }
 
     res.json(updatedJob);
   } catch (error) {
     console.log("UPDATE JOB ERROR:", error);
-    res.status(500).json({message: error.message});
+    res.status(500).json({ message: error.message });
   }
 });
 
-// DELETE
+// company deletes its own job
 app.delete("/api/jobs/:jid", verifyToken, async (req, res) => {
   try {
     const deletedJob = await JobPost.findOneAndDelete({
@@ -746,41 +800,83 @@ app.delete("/api/jobs/:jid", verifyToken, async (req, res) => {
     });
 
     if (!deletedJob) {
-      return res.status(404).json({ message: "Job not found or unauthorized" });
+      return res.status(404).json({ message: "Job not found" });
     }
 
     res.json({ message: "Deleted successfully" });
   } catch (error) {
     console.log("DELETE JOB ERROR:", error);
-    res.status(500).json({message: error.message});
-  }
-});
-// PUBLIC (approved only)
-app.get("/api/jobs", async (req, res) => {
-  try {
-    const jobs = await jobs.find({ status: "approved" });
-    res.json(jobs);
-  } catch (error) {
-    res.status(500).json(error);
+    res.status(500).json({ message: error.message });
   }
 });
 
-// ADMIN APPROVE / REJECT
-app.put("/api/jobs/admin/:jid", verifyToken, async (req, res) => {
+// admin sees all jobs, including pending/rejected/approved
+app.get("/api/jobs/admin/all", async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Unauthorized" });
+    const allJobs = await JobPost.find().sort({ createdAt: -1 }).lean();
+
+    const hydratedJobs = await Promise.all(
+      allJobs.map(async (job) => ({
+        ...job,
+        company: job.company || (await getCompanyName(job.companyId)),
+      })),
+    );
+
+    res.json(hydratedJobs);
+  } catch (error) {
+    console.log("FETCH ALL JOBS FOR ADMIN ERROR:", error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// admin approves / rejects
+// this is left open because your admin page is using a frontend-only hardcoded login.
+// later, if you add real admin auth, protect this route properly.
+app.put("/api/jobs/admin/:jid", async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    if (!["pending", "approved", "rejected"].includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
     }
 
-    const job = await jobs.findOneAndUpdate(
+    const updatedJob = await JobPost.findOneAndUpdate(
       { _jid: req.params.jid },
-      { status: req.body.status },
+      { status },
       { new: true },
     );
 
-    res.json(job);
+    if (!updatedJob) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+
+    res.json(updatedJob);
   } catch (error) {
-    res.status(500).json(error);
+    console.log("ADMIN UPDATE JOB STATUS ERROR:", error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// candidates/jobseekers see only approved jobs
+app.get("/api/jobs", async (req, res) => {
+  try {
+    const approvedJobs = await JobPost.find({ status: "approved" })
+      .sort({
+        createdAt: -1,
+      })
+      .lean();
+
+    const hydratedJobs = await Promise.all(
+      approvedJobs.map(async (job) => ({
+        ...job,
+        company: job.company || (await getCompanyName(job.companyId)),
+      })),
+    );
+
+    res.json(hydratedJobs);
+  } catch (error) {
+    console.log("FETCH APPROVED JOBS ERROR:", error);
+    res.status(500).json({ message: error.message });
   }
 });
 
@@ -796,14 +892,15 @@ app.post(
   async (req, res) => {
     try {
       const data = req.body;
-      if (!data.jobId || !data.companyId) {
-        return res
-          .status(400)
-          .json({ message: "Job ID and Company ID required" });
+      if (!data.jobId || !data.companyId || !data.userId) {
+        return res.status(400).json({
+          message: "Job ID, Company ID and Candidate ID are required",
+        });
       }
 
       const appData = new ApplyForm({
         ...data,
+        userId: data.userId,
         companyId: data.companyId,
         jobId: data.jobId,
         uploadRes: req.files?.Resume ? req.files.Resume[0].filename : "",
@@ -820,8 +917,9 @@ app.post(
     }
   },
 );
+
 // company views only applications on its jobs
-app.get("/api/applications/company/", verifyToken, async (req, res) => {
+app.get("/api/applications/company", verifyToken, async (req, res) => {
   try {
     const apps = await ApplyForm.find({
       companyId: req.user.id,
@@ -832,11 +930,61 @@ app.get("/api/applications/company/", verifyToken, async (req, res) => {
   }
 });
 
+// candidate views own applications and current status
+app.get("/api/applications/candidate/my", verifyToken, async (req, res) => {
+  try {
+    const apps = await ApplyForm.find({
+      userId: req.user.id,
+    }).sort({ createdAt: -1 });
+    res.json(apps);
+  } catch (error) {
+    res.status(500).json(error);
+  }
+});
+
+// fetch one application for company interview scheduling
+app.get("/api/applications/:id", verifyToken, async (req, res) => {
+  try {
+    const appData = await ApplyForm.findById(req.params.id);
+
+    if (!appData) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    const isOwner =
+      String(appData.companyId) === String(req.user.id) ||
+      String(appData.userId) === String(req.user.id);
+
+    if (!isOwner) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    res.json(appData);
+  } catch (error) {
+    res.status(500).json(error);
+  }
+});
+
 app.put("/api/applications/status/:id", verifyToken, async (req, res) => {
   try {
+    const appData = await ApplyForm.findById(req.params.id);
+
+    if (!appData) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    if (String(appData.companyId) !== String(req.user.id)) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const nextStatus = req.body.status;
+    if (!["pending", "selected", "rejected"].includes(nextStatus)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
     const updated = await ApplyForm.findByIdAndUpdate(
       req.params.id,
-      { status: req.body.status },
+      { status: nextStatus },
       { new: true },
     );
     res.json(updated);
@@ -862,11 +1010,56 @@ app.get("/api/candidateprofile/:candidateId", async (req, res) => {
 /* ================= INTERVIEW ================= */
 
 app.post("/api/interview", verifyToken, async (req, res) => {
-  const interview = new InterviewForm({
-    ...req.body,
-    companyId: req.user.id,
-  });
-  res.json(await interview.save());
+  try {
+    const application = await ApplyForm.findById(req.body.applicationId);
+
+    if (!application) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    if (String(application.companyId) !== String(req.user.id)) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const payload = {
+      companyId: req.user.id,
+      userId: application.userId,
+      jobId: application.jobId,
+      applicationId: application._id,
+      cname: req.body.cname || application.cname,
+      intDate: req.body.intDate,
+      intTime: req.body.intTime,
+      intPlace: req.body.intPlace,
+      candidateName:
+        req.body.candidateName || `${application.fname} ${application.lname}`,
+      apPos: req.body.apPos || application.apPos,
+      selection: req.body.selection || "selected",
+    };
+
+    const interview = await InterviewForm.findOneAndUpdate(
+      { applicationId: application._id },
+      payload,
+      { new: true, upsert: true },
+    );
+
+    await ApplyForm.findByIdAndUpdate(application._id, { status: "selected" });
+
+    res.json(interview);
+  } catch (error) {
+    res.status(500).json(error);
+  }
+});
+
+app.get("/api/interview/candidate", verifyToken, async (req, res) => {
+  try {
+    const interviews = await InterviewForm.find({
+      userId: req.user.id,
+    }).sort({ createdAt: -1 });
+
+    res.json(interviews);
+  } catch (error) {
+    res.status(500).json(error);
+  }
 });
 
 /* ================= SERVER ================= */

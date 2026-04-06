@@ -4,13 +4,17 @@ const intFormSchema = new mongoose.Schema(
   {
     companyId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "CompanyProfile",
+      ref: "RegisterComp",
     },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "CandidateProfile",
+      ref: "RegisterComp",
     },
-    _id: {
+    applicationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ApplyForm",
+    },
+    jobId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "JobPost",
     },

@@ -4,15 +4,15 @@ const applyFormSchema = new mongoose.Schema(
   {
     userId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "CandidateProfile",
+      ref: "RegisterComp",
     },
-    _id: {
+    jobId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "JobPost",
     },
     companyId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "CompanyProfile",
+      ref: "RegisterComp",
     },
     fname: String,
     lname: String,
