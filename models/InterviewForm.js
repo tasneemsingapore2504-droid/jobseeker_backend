@@ -29,6 +29,15 @@ const intFormSchema = new mongoose.Schema(
       enum: ["pending", "selected", "rejected"],
       default: "pending",
     },
+    interviewResult: {
+      type: String,
+      enum: ["pending", "selected", "rejected"],
+      default: "pending",
+    },
+    remarks: {
+      type: String,
+      default: "",
+    },
   },
   { timestamps: true },
 );

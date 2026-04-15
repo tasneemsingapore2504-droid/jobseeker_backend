@@ -152,6 +152,7 @@ const CandidateProfile = require("./models/CandidateProfile");
 const CompanyProfile = require("./models/CompanyProfile");
 const InterviewForm = require("./models/InterviewForm");
 const JobPost = require("./models/JobPost");
+const ContactFeedback = require("./models/ContactFeedback");
 const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
@@ -187,9 +188,11 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+const uploadsDir = path.join(__dirname, "uploads");
+
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, "uploads/");
+    cb(null, uploadsDir);
   },
   filename: function (req, file, cb) {
     cb(null, Date.now() + path.extname(file.originalname));
@@ -197,7 +200,6 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
-const uploadsDir = path.join(__dirname, "uploads");
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -210,7 +212,7 @@ app.use(
     credentials: true,
   }),
 );
-app.use("/uploads", express.static("uploads"));
+app.use("/uploads", express.static(uploadsDir));
 app.use((req, res, next) => {
   console.log("API HIT:", req.method, req.url);
   next();
@@ -253,6 +255,50 @@ app.put("/api/ApplyForm/:id", async (req, res) => {
 app.delete("/api/ApplyForm/:id", async (req, res) => {
   await ApplyForm.findByIdAndDelete(req.params.id);
   res.json({ message: "Application Deleted" });
+});
+
+/* ================================================= */
+/* ================= CONTACT US API ================ */
+/* ================================================= */
+
+app.post("/api/contactfeedback", async (req, res) => {
+  try {
+    const feedback = await ContactFeedback.create(req.body);
+    res.status(201).json(feedback);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.get("/api/contactfeedback", async (req, res) => {
+  try {
+    const feedback = await ContactFeedback.find().sort({ createdAt: -1 });
+    res.json(feedback);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.put("/api/contactfeedback/:id", async (req, res) => {
+  try {
+    const updated = await ContactFeedback.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true },
+    );
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.delete("/api/contactfeedback/:id", async (req, res) => {
+  try {
+    await ContactFeedback.findByIdAndDelete(req.params.id);
+    res.json({ message: "Feedback deleted" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 /* ================================================= */
@@ -494,36 +540,51 @@ app.post("/api/auth/login", async (req, res) => {
 
 /* ================= CANDIDATE PROFILE ROUTES ================= */
 
-app.post("/api/candidateprofile", verifyToken, async (req, res) => {
-  console.log("USER:", req.user);
-  console.log("BODY: ", req.body);
-  try {
-    const existingProfile = await CandidateProfile.findOne({
-      userId: req.user.id,
-    });
+app.post(
+  "/api/candidateprofile",
+  verifyToken,
+  upload.fields([
+    { name: "resume", maxCount: 1 },
+    { name: "documents", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    console.log("USER:", req.user);
+    console.log("BODY: ", req.body);
+    try {
+      const existingProfile = await CandidateProfile.findOne({
+        userId: req.user.id,
+      });
 
-    if (existingProfile) {
-      const updatedProfile = await CandidateProfile.findOneAndUpdate(
-        { userId: req.user.id },
-        req.body,
-        { new: true },
-      );
+      const payload = {
+        ...req.body,
+        resume: req.files?.resume?.[0]?.filename || req.body.resume || "",
+        documents:
+          req.files?.documents?.[0]?.filename || req.body.documents || "",
+      };
 
-      return res.json(updatedProfile);
+      if (existingProfile) {
+        const updatedProfile = await CandidateProfile.findOneAndUpdate(
+          { userId: req.user.id },
+          payload,
+          { new: true },
+        );
+
+        return res.json(updatedProfile);
+      }
+
+      const profile = new CandidateProfile({
+        ...payload,
+        userId: req.user.id,
+      });
+
+      await profile.save();
+
+      res.json(profile);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
     }
-
-    const profile = new CandidateProfile({
-      ...req.body,
-      userId: req.user.id,
-    });
-
-    await profile.save();
-
-    res.json(profile);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
+  },
+);
 
 // view own profile
 app.get("/api/candidateprofile", verifyToken, async (req, res) => {
@@ -561,18 +622,48 @@ app.get("/api/candidateprofile/:userId", verifyToken, async (req, res) => {
 });
 
 // edit own profile
-app.put("/api/candidateprofile/:userId", verifyToken, async (req, res) => {
-  try {
-    const updated = await CandidateProfile.findOneAndUpdate(
-      { userId: req.params.userId },
-      req.body,
-      { new: true, upsert: false },
-    );
-    res.json(updated);
-  } catch (error) {
-    res.status(500).json(error);
-  }
-});
+app.put(
+  "/api/candidateprofile/:userId",
+  verifyToken,
+  upload.fields([
+    { name: "resume", maxCount: 1 },
+    { name: "documents", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      if (String(req.user.id) !== String(req.params.userId)) {
+        return res.status(403).json({ message: "Unauthorized" });
+      }
+
+      const existingProfile = await CandidateProfile.findOne({
+        userId: req.params.userId,
+      });
+
+      const payload = {
+        ...req.body,
+        resume:
+          req.files?.resume?.[0]?.filename ||
+          req.body.resume ||
+          existingProfile?.resume ||
+          "",
+        documents:
+          req.files?.documents?.[0]?.filename ||
+          req.body.documents ||
+          existingProfile?.documents ||
+          "",
+      };
+
+      const updated = await CandidateProfile.findOneAndUpdate(
+        { userId: req.params.userId },
+        payload,
+        { new: true, upsert: false },
+      );
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json(error);
+    }
+  },
+);
 
 // delete own profile
 app.delete("/api/candidateprofile/:userId", verifyToken, async (req, res) => {
@@ -672,6 +763,10 @@ app.get("/api/companyprofile/:companyId", verifyToken, async (req, res) => {
 
     console.log("FETCH PROFILE BY ID:", companyId);
 
+    if (String(req.user.id) !== String(companyId)) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
     const profile = await CompanyProfile.findOne({ companyId });
 
     if (!profile) {
@@ -688,6 +783,10 @@ app.get("/api/companyprofile/:companyId", verifyToken, async (req, res) => {
 // edit own profile
 app.put("/api/companyprofile/:companyId", verifyToken, async (req, res) => {
   try {
+    if (String(req.user.id) !== String(req.params.companyId)) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
     const updated = await CompanyProfile.findOneAndUpdate(
       { companyId: req.params.companyId },
       req.body,
@@ -702,10 +801,166 @@ app.put("/api/companyprofile/:companyId", verifyToken, async (req, res) => {
 // delete own profile
 app.delete("/api/companyprofile/:companyId", verifyToken, async (req, res) => {
   try {
+    if (String(req.user.id) !== String(req.params.companyId)) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
     await CompanyProfile.deleteOne({ companyId: req.user.id });
     res.json({ message: "Deleted" });
   } catch (error) {
     res.status(500).json(error);
+  }
+});
+
+// admin views all candidate profiles
+app.get("/api/admin/candidateprofiles", async (req, res) => {
+  try {
+    const profiles = await CandidateProfile.find().sort({ createdAt: -1 });
+    res.json(profiles);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// admin views all company profiles
+app.get("/api/admin/companyprofiles", async (req, res) => {
+  try {
+    const profiles = await CompanyProfile.find().sort({ createdAt: -1 });
+    res.json(profiles);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// company views candidate profiles, optionally filtered by qualification/skills
+app.get("/api/company/candidateprofiles", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "recruiter") {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const search = (req.query.search || "").trim();
+    const filter = search
+      ? {
+          $or: [
+            { qualification: { $regex: search, $options: "i" } },
+            { skills: { $regex: search, $options: "i" } },
+            { experience: { $regex: search, $options: "i" } },
+          ],
+        }
+      : {};
+
+    const profiles = await CandidateProfile.find(filter)
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const normalizedProfiles = await Promise.all(
+      profiles.map(async (profile) => {
+        const latestApplication = await ApplyForm.findOne({
+          userId: profile.userId,
+        })
+          .sort({ createdAt: -1 })
+          .lean();
+
+        const profileResumePath = profile.resume
+          ? path.join(uploadsDir, profile.resume)
+          : "";
+        const profileDocumentPath = profile.documents
+          ? path.join(uploadsDir, profile.documents)
+          : "";
+        const applicationResumePath = latestApplication?.uploadRes
+          ? path.join(uploadsDir, latestApplication.uploadRes)
+          : "";
+        const applicationDocumentPath = latestApplication?.anyDoc
+          ? path.join(uploadsDir, latestApplication.anyDoc)
+          : "";
+
+        const resolvedResume = fs.existsSync(profileResumePath)
+          ? profile.resume
+          : fs.existsSync(applicationResumePath)
+            ? latestApplication.uploadRes
+            : "";
+
+        const resolvedDocument = fs.existsSync(profileDocumentPath)
+          ? profile.documents
+          : fs.existsSync(applicationDocumentPath)
+            ? latestApplication.anyDoc
+            : "";
+
+        return {
+          ...profile,
+          resume: resolvedResume || profile.resume || "",
+          documents: resolvedDocument || profile.documents || "",
+          resumeUrl: resolvedResume ? `/uploads/${resolvedResume}` : "",
+          documentUrl: resolvedDocument ? `/uploads/${resolvedDocument}` : "",
+        };
+      }),
+    );
+
+    res.json(normalizedProfiles);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// admin views registered candidates
+app.get("/api/admin/candidateregisters", async (req, res) => {
+  try {
+    const users = await User.find({ role: "jobseeker" })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const rows = await Promise.all(
+      users.map(async (user) => {
+        const profile = await CandidateProfile.findOne({
+          userId: user._id,
+        }).lean();
+
+        return {
+          _id: user._id,
+          fname: user.name || profile?.fname || "",
+          email: user.email || profile?.email || "",
+          phone: profile?.phone || "",
+          dob: profile?.dob || "",
+          password: user.password || "",
+          repasswd: "",
+        };
+      }),
+    );
+
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// admin views registered companies
+app.get("/api/admin/companyregisters", async (req, res) => {
+  try {
+    const users = await User.find({ role: "recruiter" })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const rows = await Promise.all(
+      users.map(async (user) => {
+        const profile = await CompanyProfile.findOne({
+          companyId: user._id,
+        }).lean();
+
+        return {
+          _id: user._id,
+          cname: profile?.cname || user.name || "",
+          cemail: profile?.cemail || user.email || "",
+          website: profile?.website || "",
+          cpassword: user.password || "",
+          repasswd: "",
+        };
+      }),
+    );
+
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 });
 
@@ -858,9 +1113,36 @@ app.put("/api/jobs/admin/:jid", async (req, res) => {
 });
 
 // candidates/jobseekers see only approved jobs
+// app.get("/api/jobs", async (req, res) => {
+//   try {
+//     const approvedJobs = await JobPost.find({ status: "approved" })
+//       .sort({
+//         createdAt: -1,
+//       })
+//       .lean();
+
+//     const hydratedJobs = await Promise.all(
+//       approvedJobs.map(async (job) => ({
+//         ...job,
+//         company: job.company || (await getCompanyName(job.companyId)),
+//       })),
+//     );
+
+//     res.json(hydratedJobs);
+//   } catch (error) {
+//     console.log("FETCH APPROVED JOBS ERROR:", error);
+//     res.status(500).json({ message: error.message });
+//   }
+// });
+
 app.get("/api/jobs", async (req, res) => {
   try {
-    const approvedJobs = await JobPost.find({ status: "approved" })
+    const today = new Date().toISOString().split("T")[0];
+
+    const approvedJobs = await JobPost.find({
+      status: "approved",
+      lastDate: { $gte: today },
+    })
       .sort({
         createdAt: -1,
       })
@@ -1034,11 +1316,21 @@ app.post("/api/interview", verifyToken, async (req, res) => {
         req.body.candidateName || `${application.fname} ${application.lname}`,
       apPos: req.body.apPos || application.apPos,
       selection: req.body.selection || "selected",
+      interviewResult: "pending",
+      remarks: "",
     };
+
+    const existingInterview = await InterviewForm.findOne({
+      applicationId: application._id,
+    });
 
     const interview = await InterviewForm.findOneAndUpdate(
       { applicationId: application._id },
-      payload,
+      {
+        ...payload,
+        interviewResult: existingInterview?.interviewResult || "pending",
+        remarks: existingInterview?.remarks || "",
+      },
       { new: true, upsert: true },
     );
 
@@ -1049,6 +1341,69 @@ app.post("/api/interview", verifyToken, async (req, res) => {
     res.status(500).json(error);
   }
 });
+
+app.get(
+  "/api/interview/application/:applicationId",
+  verifyToken,
+  async (req, res) => {
+    try {
+      const interview = await InterviewForm.findOne({
+        applicationId: req.params.applicationId,
+      });
+
+      if (!interview) {
+        return res.status(404).json({ message: "Interview not found" });
+      }
+
+      if (String(interview.companyId) !== String(req.user.id)) {
+        return res.status(403).json({ message: "Unauthorized" });
+      }
+
+      res.json(interview);
+    } catch (error) {
+      res.status(500).json(error);
+    }
+  },
+);
+
+app.put(
+  "/api/interview/:applicationId/result",
+  verifyToken,
+  async (req, res) => {
+    try {
+      const interview = await InterviewForm.findOne({
+        applicationId: req.params.applicationId,
+      });
+
+      if (!interview) {
+        return res.status(404).json({ message: "Interview not found" });
+      }
+
+      if (String(interview.companyId) !== String(req.user.id)) {
+        return res.status(403).json({ message: "Unauthorized" });
+      }
+
+      const nextResult = req.body.interviewResult || "pending";
+
+      if (!["pending", "selected", "rejected"].includes(nextResult)) {
+        return res.status(400).json({ message: "Invalid interview result" });
+      }
+
+      const updatedInterview = await InterviewForm.findOneAndUpdate(
+        { applicationId: req.params.applicationId },
+        {
+          interviewResult: nextResult,
+          remarks: req.body.remarks || "",
+        },
+        { new: true },
+      );
+
+      res.json(updatedInterview);
+    } catch (error) {
+      res.status(500).json(error);
+    }
+  },
+);
 
 app.get("/api/interview/candidate", verifyToken, async (req, res) => {
   try {
